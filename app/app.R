@@ -68,14 +68,14 @@ processed_data <- d_long %>%
 
 # --- 5. UI ---
 ui <- fluidPage(
-  titlePanel("Gene Correlation Explorer (ShinyLive Version)"),
+  titlePanel("Gene correlation explorer (ShinyLive Version)"),
 
   sidebarLayout(
     sidebarPanel(
       selectInput("x_gene", "X-Axis Gene:", choices = available_genes, selected = "SERPINA1"),
       selectInput("y_gene", "Y-Axis Gene:", choices = available_genes, selected = "CAPN2"),
       textInput("plot_title", "Plot Title (Optional):", value = ""),
-      downloadButton("downloadPlot", "Download Plot (.pdf)")
+      downloadButton("downloadPlot", "Download Plot (.png)")
     ),
     mainPanel(
       plotOutput("gene_plot")
@@ -148,13 +148,37 @@ server <- function(input, output) {
       )
   })
 
-  # Download PDF
+
+
+gene_plot_reactive <- reactive({
+  dat <- gene_plot_data()
+  if (is.null(dat)) {
+    return(ggplot() + labs(title = "Not enough data to plot") + theme_void())
+  }
+
+  xg <- input$x_gene
+  yg <- input$y_gene
+
+  ggplot(dat$df, aes(x = log2(.data[[xg]]), y = log2(.data[[yg]]))) +
+    geom_point() +
+    geom_smooth(method = "loess", se = TRUE) +
+    geom_text(data = dat$label_df, aes(x = x, y = y, label = label),
+              hjust = 0, vjust = 1, size = 4) +
+    theme_classic(base_size = 13) +
+    labs(
+      x = paste("log2 Intensity:", xg),
+      y = paste("log2 Intensity:", yg),
+      title = ifelse(input$plot_title == "", paste(yg, "vs", xg), input$plot_title)
+    )
+})
+
+  # Download PNG
   output$downloadPlot <- downloadHandler(
     filename = function() {
-      paste0("plot_", input$y_gene, "_vs_", input$x_gene, ".pdf")
+      paste0("plot_", input$y_gene, "_vs_", input$x_gene, ".png")
     },
     content = function(file) {
-      ggsave(file, plot = output$gene_plot(), device = "svg", width = 7, height = 7)
+      ggsave(file, plot = gene_plot_reactive(),  dpi = 300, width = 7, height = 7)
     }
   )
 }
