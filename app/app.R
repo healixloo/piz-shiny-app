@@ -75,7 +75,7 @@ ui <- fluidPage(
       selectInput("x_gene", "X-Axis Gene:", choices = available_genes, selected = "SERPINA1"),
       selectInput("y_gene", "Y-Axis Gene:", choices = available_genes, selected = "CAPN2"),
       textInput("plot_title", "Plot Title (Optional):", value = ""),
-      downloadButton("downloadPlot", "Download Plot (.png)")
+      downloadButton("downloadPlot", "Download Plot (.svg)")
     ),
     mainPanel(
       plotOutput("gene_plot")
@@ -175,10 +175,10 @@ gene_plot_reactive <- reactive({
   # Download PNG
   output$downloadPlot <- downloadHandler(
     filename = function() {
-      paste0("plot_", input$y_gene, "_vs_", input$x_gene, ".png")
+      paste0("plot_", input$y_gene, "_vs_", input$x_gene, ".svg")
     },
     content = function(file) {
-      ggsave(file, plot = gene_plot_reactive(), device = "png", dpi = 600, width = 7, height = 7)
+      ggsave(file, plot = gene_plot_reactive(), device = "svg", width = 7, height = 7)
     }
   )
 }
