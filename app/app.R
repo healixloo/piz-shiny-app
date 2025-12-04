@@ -8,54 +8,41 @@ library(tidyr)
 library(ggplot2)
 library(stringr) # For str_replace
 
-# --- 2. Global Data Loading and Preprocessing (FIXED SYNTAX) ---
+# --- 2. Global Data Loading and Preprocessing (ROBUST CONVERSION) ---
 
 # Set up data paths assuming the 'data' folder is next to app.R
 data_dir <- "data/"
 
 # Load data - Part 1: Intensities (d_biopsies_noexcl)
-# Use cols() and specify .default = col_guess() for the Evo12 columns
+# We rely on readr's default guessing, as we will force type conversion explicitly below.
 d_biopsies_noexcl <- read_tsv(
     paste0(data_dir, "Biopsies_PiZ_report.tsv"), 
-    col_types = cols( 
-        Protein.Group = col_character(),
-        # .default = col_guess() will attempt to correctly read the Evo12 columns as numeric
-        .default = col_guess() 
-    ),
     show_col_types = FALSE
 ) %>%
-  # Now select only the Evo12 columns and the mandatory ID column
+  # Select the protein ID and all intensity columns
   select(Protein.Group, contains("Evo12"))
 
 # Load data - Part 2: Sample Metadata (meta_biopsies)
-meta_biopsies <- read_tsv(
-    paste0(data_dir, "meta_biopsies.txt"), 
-    col_types = cols(
-        well_id = col_character(),
-        tech_rep = col_double(),
-        include = col_logical(),
-        .default = col_guess()
-    ),
-    show_col_types = FALSE
-)
+# Keep loading simple, as this file is small and simple
+meta_biopsies <- read_tsv(paste0(data_dir, "meta_biopsies.txt"), show_col_types = FALSE)
 
 # Load data - Part 3: Protein Metadata (meta_pg)
-# Use cols() and explicitly skip columns we don't need (like Evo12...)
-meta_pg <- read_tsv(
-    paste0(data_dir, "Biopsies_PiZ_report.tsv"), 
-    col_types = cols(
-        Protein.Group = col_character(),
-        Genes = col_character(),
-        .default = col_skip() # Skip all other columns for this metadata table
-    ),
-    show_col_types = FALSE
-)
+# Keep loading simple
+meta_pg <- read_tsv(paste0(data_dir, "Biopsies_PiZ_report.tsv"), show_col_types = FALSE) %>%
+  select(Protein.Group, Genes) # Ensure we only get the relevant metadata columns
 
 
-# --- Data cleaning and filtering (UNCHANGED)
+# --- Data cleaning and filtering (MODIFIED FOR ROBUSTNESS)
 d_biopsies_noexcl %>%
+  
+  # 1. CRITICAL FIX: Force all columns starting with "Evo12" to be numeric 
+  # This guarantees consistent type handling across R environments (local vs. WebAssembly).
+  mutate(across(starts_with("Evo12"), as.numeric)) %>%
+
+  # 2. Gather the data
   gather(ms_id, int, contains("Evo12")) %>%
-  mutate(int = as.numeric(int)) %>%
+  
+  # 3. Filter out zero intensity (or NA/NaN values resulting from failed conversion)
   filter(int != 0) -> d_long_noexcl
 
 # Calculate exclusion threshold (stats_lower_n)
