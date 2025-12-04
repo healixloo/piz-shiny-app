@@ -75,7 +75,7 @@ ui <- fluidPage(
       selectInput("x_gene", "X-Axis Gene:", choices = available_genes, selected = "SERPINA1"),
       selectInput("y_gene", "Y-Axis Gene:", choices = available_genes, selected = "CAPN2"),
       textInput("plot_title", "Plot Title (Optional):", value = ""),
-      downloadButton("downloadPlot", "Download Plot (.png)")
+      downloadButton("downloadPlot", "Download Plot (.pdf)")
     ),
     mainPanel(
       plotOutput("gene_plot")
@@ -175,10 +175,10 @@ gene_plot_reactive <- reactive({
   # Download PNG
   output$downloadPlot <- downloadHandler(
     filename = function() {
-      paste0("correlation_plot_", input$y_gene, "_vs_", input$x_gene, ".png")
+      paste0("correlation_plot_", input$y_gene, "_vs_", input$x_gene, ".pdf")
     },
     content = function(file) {
-      png(file, width = 7, height = 7, units = "in", res = 600)
+      pdf(file, width = 7, height = 7, units = "in")
       print(gene_plot_reactive())
       dev.off()
     }
