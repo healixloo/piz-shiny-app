@@ -1,233 +1,163 @@
-# app.R
+# app.R (ShinyLive compatible)
 
-# --- 1. Load Libraries ---
+# --- 1. Load Packages (ShinyLive Safe) ---
 library(shiny)
-library(readr)
 library(dplyr)
 library(tidyr)
 library(ggplot2)
-library(stringr) # For str_replace
 
-# --- 2. Global Data Loading and Preprocessing ---
-# This code runs ONCE when the app starts.
-# Set up data paths assuming the 'data' folder is next to app.R
-data_dir <- "data/"
+# --- 2. Load Preprocessed RDS Data ---
+# (RDS loads reliably in WebR – TSV does not)
+d_biopsies_noexcl <- readRDS("data/d_biopsies_noexcl.rds")
+meta_biopsies     <- readRDS("data/meta_biopsies.rds")
+meta_pg           <- readRDS("data/meta_pg.rds")
 
-# Load data
-# Note: show_col_types = FALSE is used to silence readr messages in the console
-d_biopsies_noexcl <- read_tsv(paste0(data_dir, "Biopsies_PiZ_report.tsv"), show_col_types = FALSE) %>%
-  select(contains(c("Protein.Group", "Evo12")))
+# --- 3. Minimal String Cleaning Without stringr ---
+extract_well <- function(x) {
+  x <- sub(".*__", "", x)     # remove prefix
+  x <- sub("_.*$", "", x)     # remove suffix
+  x
+}
 
-meta_biopsies <- read_tsv(paste0(data_dir, "meta_biopsies.txt"), show_col_types = FALSE)
+# --- 4. Preprocessing (WebR-safe) ---
 
-meta_pg <- read_tsv(paste0(data_dir, "Biopsies_PiZ_report.tsv"), show_col_types = FALSE) %>%
-  select(!contains("Evo12"))
-
-# Data cleaning and filtering (as in your original script)
-d_biopsies_noexcl %>%
-  gather(ms_id, int, contains("Evo12")) %>%
+# Convert to long format
+d_long_noexcl <- d_biopsies_noexcl %>%
+  pivot_longer(cols = contains("Evo12"),
+               names_to = "ms_id",
+               values_to = "int") %>%
   mutate(int = as.numeric(int)) %>%
-  filter(int != 0) -> d_long_noexcl
+  filter(int != 0)
 
-# Calculate exclusion threshold (stats_lower_n)
+# Compute low coverage threshold
 stats <- d_long_noexcl %>%
-  group_by(ms_id) %>%
-  summarise(n = n(), .groups = 'drop') %>%
-  ungroup() %>%
+  count(ms_id) %>%
   summarise(mean = mean(n), sd = sd(n))
+
 stats_lower_n <- stats$mean - 1.5 * stats$sd
 
-# Determine included samples (SA_incl)
+# Determine included samples
 SA_incl <- d_long_noexcl %>%
-  group_by(ms_id) %>%
-  summarise(n = n(), .groups = 'drop') %>%
+  count(ms_id) %>%
   filter(n > stats_lower_n) %>%
-  mutate(well_id = str_replace(str_replace(ms_id, ".*__", ""), "_.*", "")) %>%
-  filter(well_id %in% meta_biopsies$well_id) %>%
-  left_join(meta_biopsies, by = "well_id") %>%
+  mutate(well_id = extract_well(ms_id)) %>%
+  inner_join(meta_biopsies, by = "well_id") %>%
   filter(tech_rep %in% c(1, NA)) %>%
   filter(include == TRUE) %>%
   pull(ms_id)
 
-# Filter main long data frame
+# Final filtered long dataset
 d_long <- d_long_noexcl %>%
   filter(ms_id %in% SA_incl) %>%
-  mutate(well_id = str_replace(str_replace(ms_id, ".*__", ""), "_.*", ""))
+  mutate(well_id = extract_well(ms_id))
 
-# Get unique list of available genes for input selectors
-available_genes <- d_long %>% 
-  left_join(meta_pg, by = "Protein.Group") %>% 
-  distinct(Genes) %>% 
-  pull(Genes) %>% 
-  na.omit() %>% 
-  unique() %>%
-  sort()
+# All available genes
+available_genes <- d_long %>%
+  left_join(meta_pg, by = "Protein.Group") %>%
+  filter(!is.na(Genes)) %>%
+  distinct(Genes) %>%
+  arrange(Genes) %>%
+  pull(Genes)
 
-# Pre-join and process data for efficient reactive filtering
+# Processed dataset for plotting
 processed_data <- d_long %>%
   left_join(meta_pg, by = "Protein.Group") %>%
   select(ms_id, Genes, int) %>%
-  na.omit()
+  filter(!is.na(Genes))
 
 
-# --- 3. UI (User Interface) ---
+# --- 5. UI ---
 ui <- fluidPage(
-    titlePanel("Gene Correlation Explorer (Biopsies Data)"),
+  titlePanel("Gene Correlation Explorer (ShinyLive Version)"),
 
-    sidebarLayout(
-        sidebarPanel(
-            selectInput("x_gene", "X-Axis Gene:", 
-                        choices = available_genes, 
-                        selected = "SERPINA1"),
-            
-            selectInput("y_gene", "Y-Axis Gene:", 
-                        choices = available_genes, 
-                        selected = "CAPN2"),
-            
-            textInput("plot_title", "Plot Title (Optional):", 
-                      value = ""),
-            
-            downloadButton("downloadPlot", "Download Plot (.pdf)")
-        ),
-
-        mainPanel(
-           plotOutput("gene_plot")
-        )
+  sidebarLayout(
+    sidebarPanel(
+      selectInput("x_gene", "X-Axis Gene:", choices = available_genes, selected = "SERPINA1"),
+      selectInput("y_gene", "Y-Axis Gene:", choices = available_genes, selected = "CAPN2"),
+      textInput("plot_title", "Plot Title (Optional):", value = ""),
+      downloadButton("downloadPlot", "Download Plot (.pdf)")
+    ),
+    mainPanel(
+      plotOutput("gene_plot")
     )
+  )
 )
 
-# --- 4. Server Logic ---
+# --- 6. Server ---
 server <- function(input, output) {
 
-    # Reactive function to prepare data and generate the plot
-    gene_plot_data <- reactive({
-        req(input$x_gene, input$y_gene) # Ensure genes are selected
+  # Prepare data for plot (WebR safe: NO pivot_wider(values_fn))
+  gene_plot_data <- reactive({
+    req(input$x_gene, input$y_gene)
 
-        x_gene <- input$x_gene
-        y_gene <- input$y_gene
-        
-        # 1. --- Prepare Data ---
-        # Filter for the two genes and pivot to wide format
-        df_plot <- processed_data %>%
-            filter(Genes %in% c(x_gene, y_gene)) %>%
-            tidyr::pivot_wider(
-                id_cols = ms_id, 
-                names_from = Genes, 
-                values_from = int, 
-                values_fn = mean
-            ) %>%
-            # Remove rows where either gene is missing (NA)
-            na.omit() 
-        
-        # Check if enough data points exist after filtering
-        if(nrow(df_plot) < 2) {
-            return(NULL) # Return NULL if not enough data
-        }
+    df <- processed_data %>%
+      filter(Genes %in% c(input$x_gene, input$y_gene)) %>%
+      group_by(ms_id, Genes) %>%
+      summarise(int = mean(int), .groups = "drop") %>%
+      pivot_wider(names_from = Genes, values_from = int) %>%
+      na.omit()
 
-        # 2. --- Calculate Correlation Statistics ---
-        # Perform Pearson correlation test on log2 transformed data
-        cor_result <- cor.test(log2(df_plot[[x_gene]]), log2(df_plot[[y_gene]]), method = "pearson")
-        
-        # Format R-value (Correlation estimate)
-        r_label <- paste0("R = ", format(cor_result$estimate, digits = 3))
-        
-        # Format P-value (with custom formatting for small values)
-        p_label <- paste0("P = ", format.pval(cor_result$p.value, digits = 3, eps = 0.001))
-        
-        label_text <- paste(r_label, p_label, sep = ", ")
+    if (nrow(df) < 2) return(NULL)
 
-        # 3. --- Determine Label Position (Top Left) ---
-        x_log <- log2(df_plot[[x_gene]])
-        y_log <- log2(df_plot[[y_gene]])
-        
-        x_range <- range(x_log, na.rm = TRUE)
-        y_range <- range(y_log, na.rm = TRUE)
-        
-        # Position the text at 5% from the left (x) and 5% from the top (y)
-        x_pos <- x_range[1] + 0.05 * (x_range[2] - x_range[1])
-        y_pos <- y_range[2] - 0.05 * (y_range[2] - y_range[1])
+    # Compute correlation
+    x <- log2(df[[input$x_gene]])
+    y <- log2(df[[input$y_gene]])
 
-        label_df <- data.frame(
-            x = x_pos,
-            y = y_pos,
-            label = label_text
-        )
-        
-        # Return a list containing both the plot data and the label data
-        list(
-            df_plot = df_plot, 
-            label_df = label_df
-        )
-    })
+    cor_result <- cor.test(x, y, method = "pearson")
 
-    # Reactive function to generate the actual plot
-    gene_plot_reactive <- reactive({
-        plot_data_list <- gene_plot_data()
-        
-        if (is.null(plot_data_list)) {
-            return(
-                ggplot() + 
-                labs(title = paste("Insufficient data for:", input$y_gene, "vs", input$x_gene)) +
-                theme_void()
-            )
-        }
-        
-        df_plot <- plot_data_list$df_plot
-        label_df <- plot_data_list$label_df
-        x_gene <- input$x_gene
-        y_gene <- input$y_gene
-        
-        # 4. --- Plot Generation ---
-        plot <- ggplot(df_plot, aes(x = log2(.data[[x_gene]]), y = log2(.data[[y_gene]]))) +
-            
-            # 4a. Add Points
-            geom_point() +
-            
-            # 4b. Add loess smooth line WITH Standard Error (SE)
-            geom_smooth(method = "loess", se = TRUE, color = "blue", fill = "lightblue", alpha = 0.5) +
-            
-            # 4c. Add Correlation Label using geom_text
-            # Use hjust=0 (left-aligned) and vjust=1 (top-aligned)
-            geom_text(
-                data = label_df, 
-                aes(x = x, y = y, label = label), 
-                inherit.aes = FALSE,
-                hjust = 0, 
-                vjust = 1,
-                size = 4
-            ) +
-            
-            # 4d. Theme and Labels
-            theme_classic(base_size = 13) +
-            labs(
-                x = paste("log2 Intensity:", x_gene),
-                y = paste("log2 Intensity:", y_gene),
-                title = ifelse(
-                    input$plot_title == "", 
-                    paste(y_gene, "vs", x_gene), 
-                    input$plot_title
-                )
-            )
-        
-        return(plot)
-    })
+    label <- sprintf("R = %.3f, P = %.3g", 
+                     cor_result$estimate, cor_result$p.value)
 
+    # Label position
+    x_range <- range(x, na.rm = TRUE)
+    y_range <- range(y, na.rm = TRUE)
 
-    # Render the reactive plot to the UI
-    output$gene_plot <- renderPlot({
-        gene_plot_reactive()
-    })
-
-    # Download Handler for PDF
-    output$downloadPlot <- downloadHandler(
-        filename = function() {
-            paste0("correlation_plot_", input$y_gene, "_vs_", input$x_gene, ".pdf")
-        },
-        content = function(file) {
-            ggsave(file, plot = gene_plot_reactive(), device = "pdf", width = 7, height = 7)
-        }
+    label_df <- data.frame(
+      x = x_range[1] + 0.05 * diff(x_range),
+      y = y_range[2] - 0.05 * diff(y_range),
+      label = label
     )
+
+    list(df = df, label_df = label_df)
+  })
+
+  # Generate Plot
+  output$gene_plot <- renderPlot({
+    dat <- gene_plot_data()
+    if (is.null(dat)) {
+      return(ggplot() + 
+               labs(title = "Not enough data to plot") +
+               theme_void())
+    }
+
+    xg <- input$x_gene
+    yg <- input$y_gene
+
+    ggplot(dat$df, aes(x = log2(.data[[xg]]), y = log2(.data[[yg]]))) +
+      geom_point() +
+      geom_smooth(method = "loess", se = TRUE) +
+      geom_text(data = dat$label_df, aes(x = x, y = y, label = label),
+                hjust = 0, vjust = 1, size = 4) +
+      theme_classic(base_size = 13) +
+      labs(
+        x = paste("log2 Intensity:", xg),
+        y = paste("log2 Intensity:", yg),
+        title = ifelse(input$plot_title == "", 
+                       paste(yg, "vs", xg), 
+                       input$plot_title)
+      )
+  })
+
+  # Download PDF
+  output$downloadPlot <- downloadHandler(
+    filename = function() {
+      paste0("plot_", input$y_gene, "_vs_", input$x_gene, ".pdf")
+    },
+    content = function(file) {
+      ggsave(file, plot = output$gene_plot(), width = 7, height = 7)
+    }
+  )
 }
 
-# --- 5. Run the application ---
-shinyApp(ui = ui, server = server)
+# Run app
+shinyApp(ui, server)
