@@ -172,18 +172,15 @@ gene_plot_reactive <- reactive({
     )
 })
 
-  # Download PNG
+  # Download PDF
   output$downloadPlot <- downloadHandler(
     filename = function() {
-      paste0("correlation_plot_", input$y_gene, "_vs_", input$x_gene, ".pdf")
+      paste0("plot_", input$y_gene, "_vs_", input$x_gene, ".pdf")
     },
     content = function(file) {
-      pdf(file, width = 7, height = 7, units = "in")
-      print(gene_plot_reactive())
-      dev.off()
+      ggsave(file, plot = gene_plot_reactive(), width = 7, height = 7)
     }
   )
-
 }
 
 # Run app
