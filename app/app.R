@@ -8,41 +8,38 @@ library(tidyr)
 library(ggplot2)
 library(stringr) # For str_replace
 
-# --- 2. Global Data Loading and Preprocessing (ROBUST CONVERSION) ---
+# --- 2. Global Data Loading and Preprocessing (ROBUST CONVERSION FOR SHINYLIVE) ---
 
 # Set up data paths assuming the 'data' folder is next to app.R
 data_dir <- "data/"
 
-# Load data - Part 1: Intensities (d_biopsies_noexcl)
-# We rely on readr's default guessing, as we will force type conversion explicitly below.
+# Load data - Part 1: Intensities
 d_biopsies_noexcl <- read_tsv(
     paste0(data_dir, "Biopsies_PiZ_report.tsv"), 
-    show_col_types = FALSE
+    show_col_types = FALSE # Let readr guess, but we will force conversion below
 ) %>%
   # Select the protein ID and all intensity columns
   select(Protein.Group, contains("Evo12"))
 
-# Load data - Part 2: Sample Metadata (meta_biopsies)
-# Keep loading simple, as this file is small and simple
+# Load data - Part 2: Sample Metadata
 meta_biopsies <- read_tsv(paste0(data_dir, "meta_biopsies.txt"), show_col_types = FALSE)
 
-# Load data - Part 3: Protein Metadata (meta_pg)
-# Keep loading simple
+# Load data - Part 3: Protein Metadata
 meta_pg <- read_tsv(paste0(data_dir, "Biopsies_PiZ_report.tsv"), show_col_types = FALSE) %>%
-  select(Protein.Group, Genes) # Ensure we only get the relevant metadata columns
+  select(Protein.Group, Genes) 
 
 
-# --- Data cleaning and filtering (MODIFIED FOR ROBUSTNESS)
+# --- Data cleaning and filtering (CRITICAL FIX FOR TYPE CONSISTENCY)
 d_biopsies_noexcl %>%
   
-  # 1. CRITICAL FIX: Force all columns starting with "Evo12" to be numeric 
-  # This guarantees consistent type handling across R environments (local vs. WebAssembly).
+  # CRITICAL FIX: Explicitly force all Evo12 columns to be numeric before gathering. 
+  # This resolves inconsistent type guessing in the WebAssembly environment.
   mutate(across(starts_with("Evo12"), as.numeric)) %>%
 
-  # 2. Gather the data
+  # Gather the data
   gather(ms_id, int, contains("Evo12")) %>%
   
-  # 3. Filter out zero intensity (or NA/NaN values resulting from failed conversion)
+  # Filter out zero intensity 
   filter(int != 0) -> d_long_noexcl
 
 # Calculate exclusion threshold (stats_lower_n)
@@ -219,12 +216,14 @@ server <- function(input, output) {
         gene_plot_reactive()
     })
 
-    # Download Handler for PDF
+    # Download Handler for PDF (SYNTAX IS CORRECT FOR SHINYLIVE)
     output$downloadPlot <- downloadHandler(
         filename = function() {
+            # Ensure file extension is explicitly .pdf
             paste0("correlation_plot_", input$y_gene, "_vs_", input$x_gene, ".pdf")
         },
         content = function(file) {
+            # Shiny's Wasm bindings intercept this and handle the stream download
             ggsave(file, plot = gene_plot_reactive(), device = "pdf", width = 7, height = 7)
         }
     )
