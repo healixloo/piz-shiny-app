@@ -178,7 +178,7 @@ gene_plot_reactive <- reactive({
       paste0("plot_", input$y_gene, "_vs_", input$x_gene, ".png")
     },
     content = function(file) {
-      ggsave(file, plot = gene_plot_reactive(),  dpi = 300, width = 7, height = 7)
+      ggsave(file, plot = gene_plot_reactive(), device = "png", dpi = 600, width = 7, height = 7)
     }
   )
 }
