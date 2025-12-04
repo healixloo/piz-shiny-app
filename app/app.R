@@ -154,7 +154,7 @@ server <- function(input, output) {
       paste0("plot_", input$y_gene, "_vs_", input$x_gene, ".pdf")
     },
     content = function(file) {
-      ggsave(file, plot = output$gene_plot(), width = 7, height = 7)
+      ggsave(file, plot = output$gene_plot(), device = "svg", width = 7, height = 7)
     }
   )
 }
