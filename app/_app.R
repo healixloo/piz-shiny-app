@@ -8,51 +8,22 @@ library(tidyr)
 library(ggplot2)
 library(stringr) # For str_replace
 
-# --- 2. Global Data Loading and Preprocessing (FIXED SYNTAX) ---
-
+# --- 2. Global Data Loading and Preprocessing ---
+# This code runs ONCE when the app starts.
 # Set up data paths assuming the 'data' folder is next to app.R
 data_dir <- "data/"
 
-# Load data - Part 1: Intensities (d_biopsies_noexcl)
-# Use cols() and specify .default = col_guess() for the Evo12 columns
-d_biopsies_noexcl <- read_tsv(
-    paste0(data_dir, "Biopsies_PiZ_report.tsv"), 
-    col_types = cols( 
-        Protein.Group = col_character(),
-        # .default = col_guess() will attempt to correctly read the Evo12 columns as numeric
-        .default = col_guess() 
-    ),
-    show_col_types = FALSE
-) %>%
-  # Now select only the Evo12 columns and the mandatory ID column
-  select(Protein.Group, contains("Evo12"))
+# Load data
+# Note: show_col_types = FALSE is used to silence readr messages in the console
+d_biopsies_noexcl <- read_tsv(paste0(data_dir, "Biopsies_PiZ_report.tsv"), show_col_types = FALSE) %>%
+  select(contains(c("Protein.Group", "Evo12")))
 
-# Load data - Part 2: Sample Metadata (meta_biopsies)
-meta_biopsies <- read_tsv(
-    paste0(data_dir, "meta_biopsies.txt"), 
-    col_types = cols(
-        well_id = col_character(),
-        tech_rep = col_double(),
-        include = col_logical(),
-        .default = col_guess()
-    ),
-    show_col_types = FALSE
-)
+meta_biopsies <- read_tsv(paste0(data_dir, "meta_biopsies.txt"), show_col_types = FALSE)
 
-# Load data - Part 3: Protein Metadata (meta_pg)
-# Use cols() and explicitly skip columns we don't need (like Evo12...)
-meta_pg <- read_tsv(
-    paste0(data_dir, "Biopsies_PiZ_report.tsv"), 
-    col_types = cols(
-        Protein.Group = col_character(),
-        Genes = col_character(),
-        .default = col_skip() # Skip all other columns for this metadata table
-    ),
-    show_col_types = FALSE
-)
+meta_pg <- read_tsv(paste0(data_dir, "Biopsies_PiZ_report.tsv"), show_col_types = FALSE) %>%
+  select(!contains("Evo12"))
 
-
-# --- Data cleaning and filtering (UNCHANGED)
+# Data cleaning and filtering (as in your original script)
 d_biopsies_noexcl %>%
   gather(ms_id, int, contains("Evo12")) %>%
   mutate(int = as.numeric(int)) %>%
@@ -136,6 +107,7 @@ server <- function(input, output) {
         y_gene <- input$y_gene
         
         # 1. --- Prepare Data ---
+        # Filter for the two genes and pivot to wide format
         df_plot <- processed_data %>%
             filter(Genes %in% c(x_gene, y_gene)) %>%
             tidyr::pivot_wider(
@@ -144,17 +116,24 @@ server <- function(input, output) {
                 values_from = int, 
                 values_fn = mean
             ) %>%
+            # Remove rows where either gene is missing (NA)
             na.omit() 
         
+        # Check if enough data points exist after filtering
         if(nrow(df_plot) < 2) {
-            return(NULL)
+            return(NULL) # Return NULL if not enough data
         }
 
         # 2. --- Calculate Correlation Statistics ---
+        # Perform Pearson correlation test on log2 transformed data
         cor_result <- cor.test(log2(df_plot[[x_gene]]), log2(df_plot[[y_gene]]), method = "pearson")
         
+        # Format R-value (Correlation estimate)
         r_label <- paste0("R = ", format(cor_result$estimate, digits = 3))
+        
+        # Format P-value (with custom formatting for small values)
         p_label <- paste0("P = ", format.pval(cor_result$p.value, digits = 3, eps = 0.001))
+        
         label_text <- paste(r_label, p_label, sep = ", ")
 
         # 3. --- Determine Label Position (Top Left) ---
@@ -164,6 +143,7 @@ server <- function(input, output) {
         x_range <- range(x_log, na.rm = TRUE)
         y_range <- range(y_log, na.rm = TRUE)
         
+        # Position the text at 5% from the left (x) and 5% from the top (y)
         x_pos <- x_range[1] + 0.05 * (x_range[2] - x_range[1])
         y_pos <- y_range[2] - 0.05 * (y_range[2] - y_range[1])
 
@@ -173,6 +153,7 @@ server <- function(input, output) {
             label = label_text
         )
         
+        # Return a list containing both the plot data and the label data
         list(
             df_plot = df_plot, 
             label_df = label_df
@@ -199,10 +180,14 @@ server <- function(input, output) {
         # 4. --- Plot Generation ---
         plot <- ggplot(df_plot, aes(x = log2(.data[[x_gene]]), y = log2(.data[[y_gene]]))) +
             
+            # 4a. Add Points
             geom_point() +
             
+            # 4b. Add loess smooth line WITH Standard Error (SE)
             geom_smooth(method = "loess", se = TRUE, color = "blue", fill = "lightblue", alpha = 0.5) +
             
+            # 4c. Add Correlation Label using geom_text
+            # Use hjust=0 (left-aligned) and vjust=1 (top-aligned)
             geom_text(
                 data = label_df, 
                 aes(x = x, y = y, label = label), 
@@ -212,6 +197,7 @@ server <- function(input, output) {
                 size = 4
             ) +
             
+            # 4d. Theme and Labels
             theme_classic(base_size = 13) +
             labs(
                 x = paste("log2 Intensity:", x_gene),
