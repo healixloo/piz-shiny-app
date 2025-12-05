@@ -74,8 +74,8 @@ ui <- fluidPage(
     sidebarPanel(
       selectInput("x_gene", "X-Axis Gene:", choices = available_genes, selected = "SERPINA1"),
       selectInput("y_gene", "Y-Axis Gene:", choices = available_genes, selected = "CAPN2"),
-      textInput("plot_title", "Plot Title (Optional):", value = ""),
-      downloadButton("downloadPlot", "Download Plot (.pdf)")
+      textInput("plot_title", "Plot Title (Optional):", value = "")#,
+      #downloadButton("downloadPlot", "Download Plot (.pdf)")
     ),
     mainPanel(
       plotOutput("gene_plot")
@@ -173,14 +173,14 @@ gene_plot_reactive <- reactive({
 })
 
   # Download PDF
-  output$downloadPlot <- downloadHandler(
-    filename = function() {
-      paste0("plot_", input$y_gene, "_vs_", input$x_gene, ".pdf")
-    },
-    content = function(file) {
-      ggsave(file, plot = gene_plot_reactive(), width = 7, height = 7)
-    }
-  )
+#  output$downloadPlot <- downloadHandler(
+#    filename = function() {
+#      paste0("plot_", input$y_gene, "_vs_", input$x_gene, ".pdf")
+#    },
+#    content = function(file) {
+#      ggsave(file, plot = gene_plot_reactive(), width = 7, height = 7)
+#    }
+#  )
 }
 
 # Run app
